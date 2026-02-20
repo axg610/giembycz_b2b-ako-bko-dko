@@ -1,0 +1,31 @@
+```{r setup, include=F}
+library(tidyverse)
+library(writexl)
+library(pheatmap)
+```
+
+```{r}
+tpm <- read_tsv("../data/B2B_AKO_BKO tpm.txt")
+```
+
+```{r check basal expression}
+basal <- tpm %>% 
+  filter(treatment == "NS") %>%
+  mutate(condition = if_else(condition == "B2B-WT", "WT", condition)) %>%
+  mutate(name = paste0(condition, "_", sample)) %>%
+  select(Gene, name, tpm) %>%
+  pivot_wider(names_from = "name", values_from = "tpm")
+
+write_xlsx(basal, "../data/_wide data/basal expression (NS, tpms).xlsx")
+
+basal_mat <- basal %>%
+  column_to_rownames("Gene") %>%
+  filter(rowSums(. == 0) < 10) %>%
+  as.matrix()
+
+basal_mat <- log2(basal_mat + 0.1)
+
+pheatmap(basal_mat, cluster_cols = F)
+  
+```
+

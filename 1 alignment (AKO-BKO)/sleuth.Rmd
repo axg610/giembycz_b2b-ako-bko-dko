@@ -1,0 +1,437 @@
+```{r setup, include=F}
+library(tidyverse)
+library(sleuth)
+library(writexl)
+```
+
+# ORIGINAL SLEUTH RUN - fall 2024
+# this analysis was performed without ARC access, so all kallisto files are kept locally
+
+```{r prep sleuth inputs, include=F}
+#transcript to gene mapping
+t2g <- read_tsv("../data_AKO-BKO/Homo_sapiens.GRCh38.p13.cdna.all.070121.mart_export.txt") %>%
+  select(target_id = 1, gene = 2, gene_id = 4) %>% 
+  distinct(target_id, gene_id, .keep_all = T) %>%
+  na.omit()
+
+#main meta file
+a <- read_tsv("../data_AKO-BKO/meta.txt") %>%
+  select(sample, treatment, condition, time, rep)
+b <- data.frame(sample = list.files("../data_AKO-BKO/test_kallisto2"),
+                  path = list.files("../data_AKO-BKO/test_kallisto2", full.names=T)) %>%
+  filter(sample != "CHGI-NTC")
+meta <- left_join(a,b, by = join_by(sample)) %>%
+  mutate(condition = factor(condition, levels = unique(condition)),
+         treatment = factor(treatment, levels = unique(treatment))) %>%
+  filter(time == 2)
+rm(a,b)
+
+#split meta files
+meta_wt <- filter(meta, condition == "B2B-WT")
+meta_ako <- filter(meta, condition == "AKO")
+meta_bko <- filter(meta, condition == "BKO")
+meta_ns <- filter(meta, treatment == "NS")
+# and others if needed
+
+new_filter <- function(row, min_reads = 5, min_prop = 0.2){mean(row >= min_reads) >= min_prop}
+```
+
+```{r create sleuth objects, warning=F}
+# #full sleuth object
+# so <- sleuth_prep(sample_to_covariates = meta,
+#                   full_model = ~condition*treatment,
+#                   target_mapping = t2g,
+#                   gene_mode = TRUE,
+#                   aggregation_column = "gene",
+#                   filter_fun = new_filter,
+#                   num_cores = 1)
+saveRDS(so, "../data_AKO-BKO/objects/so.rds")
+
+# #wt only
+# so_wt <- sleuth_prep(sample_to_covariates = meta_wt,
+#                   full_model = ~treatment,
+#                   target_mapping = t2g,
+#                   gene_mode = TRUE,
+#                   aggregation_column = "gene",
+#                   filter_fun = new_filter,
+#                   num_cores = 1)
+saveRDS(so_wt, "../data_AKO-BKO/objects/so_wt.rds")
+
+# #ako only
+# so_ako <- sleuth_prep(sample_to_covariates = meta_ako,
+#                   full_model = ~treatment,
+#                   target_mapping = t2g,
+#                   gene_mode = TRUE,
+#                   aggregation_column = "gene",
+#                   filter_fun = new_filter,
+#                   num_cores = 1)
+saveRDS(so_ako, "../data_AKO-BKO/objects/so_ako.rds")
+
+#bko only
+so_bko <- sleuth_prep(sample_to_covariates = meta_bko,
+                  full_model = ~treatment,
+                  target_mapping = t2g,
+                  gene_mode = TRUE,
+                  aggregation_column = "gene",
+                  filter_fun = new_filter,
+                  num_cores = 1)
+saveRDS(so_bko, "../data_AKO-BKO/objects/so_bko.rds")
+
+# #ns only
+# so_ns <- sleuth_prep(sample_to_covariates = meta_ns,
+#                   full_model = ~condition,
+#                   target_mapping = t2g,
+#                   gene_mode = TRUE,
+#                   aggregation_column = "gene",
+#                   filter_fun = new_filter,
+#                   num_cores = 1)
+saveRDS(so_ns, "../data_AKO-BKO/objects/so_ns.rds")
+```
+
+```{r fit models and do tests}
+so_wt <- so_wt %>%
+  sleuth_fit(~treatment) %>%
+  sleuth_wt("treatmentForm") %>% 
+  sleuth_wt("treatmentBud") %>% 
+  sleuth_wt("treatmentF+B")
+
+so_ako <- so_ako %>%
+  sleuth_fit(~treatment) %>%
+  sleuth_wt("treatmentForm") %>% 
+  sleuth_wt("treatmentBud") %>% 
+  sleuth_wt("treatmentF+B")
+
+so_bko <- so_bko %>%
+  sleuth_fit(~treatment) %>%
+  sleuth_wt("treatmentForm") %>% 
+  sleuth_wt("treatmentBud") %>% 
+  sleuth_wt("treatmentF+B")
+
+so_ns <- so_ns %>%
+  sleuth_fit(~condition) %>%
+  sleuth_wt("conditionAKO") %>% 
+  sleuth_wt("conditionBKO")
+
+so <- so %>%
+  sleuth_fit(~condition*treatment, "full") %>%
+  sleuth_fit(~1, "reduced") %>%
+  sleuth_fit(~condition, "condition") %>%
+  sleuth_fit(~treatment, "treatment") %>%
+  
+  sleuth_lrt("reduced", "full") %>%
+  sleuth_lrt("condition", "full") %>%
+  sleuth_lrt("treatment", "full") %>%
+  
+  sleuth_wt("conditionAKO:treatmentForm") %>%
+  sleuth_wt("conditionAKO:treatmentBud") %>%
+  sleuth_wt("conditionAKO:treatmentF+B") %>%
+  
+  sleuth_wt("conditionBKO:treatmentForm") %>%
+  sleuth_wt("conditionBKO:treatmentBud") %>%
+  sleuth_wt("conditionBKO:treatmentF+B")
+```
+
+```{r pull tpms}
+results_tpm <- kallisto_table(so, use_filtered = FALSE) %>%
+  select(Gene = target_id, sample, condition, treatment, tpm)
+
+write_tsv(results_tpm, "../data_AKO-BKO/B2B_AKO_BKO tpm.txt")
+```
+
+```{r assemble multivariate analysis}
+a <- sleuth_results(so, "reduced:full", "lrt") %>%
+  select(Gene = 1, FDR_full = 4) %>%
+  distinct()
+b <- sleuth_results(so, "condition:full", "lrt") %>%
+  select(Gene = 1, FDR_treatment = 4) %>%
+  distinct()
+c <- sleuth_results(so, "treatment:full", "lrt") %>%
+  select(Gene = 1, FDR_condition = 4) %>%
+  distinct()
+d <- sleuth_results(so, "conditionAKO:treatmentForm", "wt") %>%
+  select(Gene = 1, diff_AKO_Form = 5, FDR_AKO_Form = 4) %>%
+  distinct()
+e <- sleuth_results(so, "conditionAKO:treatmentBud", "wt") %>%
+  select(Gene = 1, diff_AKO_Bud = 5, FDR_AKO_Bud = 4) %>%
+  distinct()
+f <- sleuth_results(so, "conditionAKO:treatmentF+B", "wt") %>%
+  select(Gene = 1, diff_AKO_FB = 5, FDR_AKO_FB = 4) %>%
+  distinct()
+g <- sleuth_results(so, "conditionBKO:treatmentForm", "wt") %>%
+  select(Gene = 1, diff_BKO_Form = 5, FDR_BKO_Form = 4) %>%
+  distinct()
+h <- sleuth_results(so, "conditionBKO:treatmentBud", "wt") %>%
+  select(Gene = 1, diff_BKO_Bud = 5, FDR_BKO_Bud = 4) %>%
+  distinct()
+i <- sleuth_results(so, "conditionBKO:treatmentF+B", "wt") %>%
+  select(Gene = 1, diff_BKO_FB = 5, FDR_BKO_FB = 4) %>%
+  distinct()
+
+results_dea_multi <- left_join(a, b, by = "Gene") %>%
+  left_join(c, by = "Gene") %>%
+  left_join(d, by = "Gene") %>%
+  left_join(e, by = "Gene") %>%
+  left_join(f, by = "Gene") %>%
+  left_join(g, by = "Gene") %>%
+  left_join(h, by = "Gene") %>%
+  left_join(i, by = "Gene") %>%
+  arrange(Gene) %>%
+  mutate(across(contains("FDR"), ~ if_else(is.na(.), 1, .))) %>%
+  mutate(across(contains("diff"), ~ if_else(is.na(.), 0, .)))
+
+rm(a,b,c,d,e,f,g,h,i)
+
+write_tsv(results_dea_multi, "../data_AKO-BKO/B2B_AKO_BKO DEA (multivariate).txt")
+```
+
+```{r assemble univariate analysis for treatment}
+a <- sleuth_results(so_wt, "treatmentForm") %>%
+  select(Gene = 1, log2fold = 5, FDR = 4) %>%
+  mutate(log2fold = log2fold / log(2)) %>%
+  distinct() %>%
+  mutate(condition = "B2B-WT", treatment = "Form", .before = 2)
+b <- sleuth_results(so_wt, "treatmentBud") %>%
+  select(Gene = 1, log2fold = 5, FDR = 4) %>%
+  mutate(log2fold = log2fold / log(2)) %>%
+  distinct() %>%
+  mutate(condition = "B2B-WT", treatment = "Bud", .before = 2)
+c <- sleuth_results(so_wt, "treatmentF+B") %>%
+  select(Gene = 1, log2fold = 5, FDR = 4) %>%
+  mutate(log2fold = log2fold / log(2)) %>%
+  distinct() %>%
+  mutate(condition = "B2B-WT", treatment = "F+B", .before = 2)
+d <- sleuth_results(so_ako, "treatmentForm") %>%
+  select(Gene = 1, log2fold = 5, FDR = 4) %>%
+  mutate(log2fold = log2fold / log(2)) %>%
+  distinct() %>%
+  mutate(condition = "AKO", treatment = "Form", .before = 2)
+e <- sleuth_results(so_ako, "treatmentBud") %>%
+  select(Gene = 1, log2fold = 5, FDR = 4) %>%
+  mutate(log2fold = log2fold / log(2)) %>%
+  distinct() %>%
+  mutate(condition = "AKO", treatment = "Bud", .before = 2)
+f <- sleuth_results(so_ako, "treatmentF+B") %>%
+  select(Gene = 1, log2fold = 5, FDR = 4) %>%
+  mutate(log2fold = log2fold / log(2)) %>%
+  distinct() %>%
+  mutate(condition = "AKO", treatment = "F+B", .before = 2)
+g <- sleuth_results(so_bko, "treatmentForm") %>%
+  select(Gene = 1, log2fold = 5, FDR = 4) %>%
+  mutate(log2fold = log2fold / log(2)) %>%
+  distinct() %>%
+  mutate(condition = "BKO", treatment = "Form", .before = 2)
+h <- sleuth_results(so_bko, "treatmentBud") %>%
+  select(Gene = 1, log2fold = 5, FDR = 4) %>%
+  mutate(log2fold = log2fold / log(2)) %>%
+  distinct() %>%
+  mutate(condition = "BKO", treatment = "Bud", .before = 2)
+i <- sleuth_results(so_bko, "treatmentF+B") %>%
+  select(Gene = 1, log2fold = 5, FDR = 4) %>%
+  mutate(log2fold = log2fold / log(2)) %>%
+  distinct() %>%
+  mutate(condition = "BKO", treatment = "F+B", .before = 2)
+
+results_dea_treatment <- rbind(a,b,c,d,e,f,g,h,i) %>%
+  arrange(Gene) %>%
+  mutate(log2fold = if_else(is.na(log2fold), 0, log2fold),
+         FDR = if_else(is.na(FDR), 1, FDR)) %>%
+  mutate(fold = 2^log2fold, .before = 4) %>%
+  mutate(sig = if_else(fold >= 1.5 & FDR < 0.05, "up",
+                       if_else(fold <= 0.67 & FDR < 0.05, "dn", "ns"))) %>%
+  mutate(condition = if_else(condition == "B2B-WT", "WT", condition),
+         treatment = if_else(treatment == "F+B", "FB", treatment)) %>%
+  group_by(Gene) %>%
+  filter(!all(fold == 1)) %>%
+  ungroup()
+
+rm(a,b,c,d,e,f,g,h,i)
+
+write_tsv(results_dea_treatment, "../data_AKO-BKO/B2B_AKO_BKO DEA (effect of treatments in KOs).txt")
+```
+
+```{r assemble univariate analysis for NS}
+a <- sleuth_results(so_ns, "conditionAKO") %>%
+  select(Gene = 1, log2fold = 5, FDR = 4) %>%
+  mutate(log2fold = log2fold / log(2)) %>%
+  distinct() %>%
+  mutate(condition = "AKO", treatment = "NS", .before = 2)
+b <- sleuth_results(so_ns, "conditionBKO") %>%
+  select(Gene = 1, log2fold = 5, FDR = 4) %>%
+  mutate(log2fold = log2fold / log(2)) %>%
+  distinct() %>%
+  mutate(condition = "BKO", treatment = "NS", .before = 2)
+
+results_dea_condition <- rbind(a,b) %>%
+  arrange(Gene) %>%
+  mutate(log2fold = if_else(is.na(log2fold), 0, log2fold),
+         FDR = if_else(is.na(FDR), 1, FDR)) %>%
+  mutate(fold = 2^log2fold, .before = 4) %>%
+  mutate(sig = if_else(fold >= 1.5 & FDR < 0.05, "up",
+                       if_else(fold <= 0.67 & FDR < 0.05, "dn", "ns"))) %>%
+  group_by(Gene) %>%
+  filter(!all(fold == 1)) %>%
+  ungroup()
+
+rm(a,b)
+
+write_tsv(results_dea_condition, "../data_AKO-BKO/B2B_AKO_BKO DEA (effect of KO in NS).txt")
+```
+
+```{r write genelists}
+genelists <- list()
+
+for(c in unique(results_dea_treatment$condition)){
+  for(t in unique(results_dea_treatment$treatment)){
+    for(s in c("up", "dn")){
+      
+      df = results_dea_treatment %>% filter(condition == c & treatment == t & sig == s) %>%
+        arrange(desc(fold))
+      genes = df %>% pull(Gene) %>% unique() %>% sort()
+      length = length(genes)
+      
+      name = paste0(c, "_", t, "_", s)
+      
+      writeLines(genes, paste0("../data_AKO-BKO/genelists_names/", name, " (", length, ").txt"))
+      write_tsv(df, paste0("../data_AKO-BKO/genelists_data/", name, " (", length, ").txt"))
+      
+      genelists[[name]] = genes
+    }
+  }
+}
+
+for(c in unique(results_dea_condition$condition)){
+    for(s in c("up", "dn")){
+      
+      df = results_dea_condition %>% filter(condition == c & sig == s) %>%
+        arrange(desc(fold))
+      genes = df %>% pull(Gene) %>% unique() %>% sort()
+      length = length(genes)
+      
+      name = paste0(c, "_", s)
+      
+      writeLines(genes, paste0("../data_AKO-BKO/genelists_names/", name, " (", length, ").txt"))
+      write_tsv(df, paste0("../data_AKO-BKO/genelists_data/", name, " (", length, ").txt"))
+      
+      genelists[[name]] = genes
+    }
+}
+
+rm(df, c, genes, length, name, s, t)
+```
+
+```{r pivot for tamkeen and mark}
+wide_dea_condition <- results_dea_condition %>%
+  pivot_longer(c(fold, FDR), names_to = "stat", values_to = "value") %>%
+  mutate(name = paste0(condition, "_", stat)) %>%
+  select(Gene, treatment, name, value) %>%
+  pivot_wider(names_from = "name", values_from = "value")
+
+wide_dea_treatment <- results_dea_treatment %>%
+  pivot_longer(c(fold, FDR), names_to = "stat", values_to = "value") %>%
+  mutate(name = paste0(treatment, "_", stat)) %>%
+  select(Gene, condition, name, value) %>%
+  pivot_wider(names_from = "name", values_from = "value") %>%
+  group_by(condition) %>%
+  group_split()
+
+names(wide_dea_treatment) = c("AKO", "BKO", "WT")
+
+wide_tpm_wt <- read_tsv("../data_AKO-BKO/B2B_AKO_BKO tpm.txt") %>%
+  mutate(rep = gsub("^[A-Z]", "", sample)) %>%
+  mutate(rep = paste0("rep", rep)) %>%
+  arrange(rep) %>%
+  mutate(sample = paste0(treatment, " (", rep, ")")) %>%
+  select(Gene, condition, sample, tpm) %>%
+  pivot_wider(values_from = "tpm", names_from = "sample") %>%
+  select(Gene, condition, contains("NS"), contains("Form")) %>%
+  filter(condition == "B2B-WT")
+
+wide_tpm_ako <- read_tsv("../data_AKO-BKO/B2B_AKO_BKO tpm.txt") %>%
+  mutate(rep = gsub("^[A-Z]", "", sample)) %>%
+  mutate(rep = paste0("rep", rep)) %>%
+  arrange(rep) %>%
+  mutate(sample = paste0(treatment, " (", rep, ")")) %>%
+  select(Gene, condition, sample, tpm) %>%
+  pivot_wider(values_from = "tpm", names_from = "sample") %>%
+  select(Gene, condition, contains("NS"), contains("Form")) %>%
+  filter(condition == "AKO")
+
+wide_tpm_bko <- read_tsv("../data_AKO-BKO/B2B_AKO_BKO tpm.txt") %>%
+  mutate(rep = gsub("^[A-Z]", "", sample)) %>%
+  mutate(rep = paste0("rep", rep)) %>%
+  arrange(rep) %>%
+  mutate(sample = paste0(treatment, " (", rep, ")")) %>%
+  select(Gene, condition, sample, tpm) %>%
+  pivot_wider(values_from = "tpm", names_from = "sample") %>%
+  select(Gene, condition, contains("NS"), contains("Form")) %>%
+  filter(condition == "BKO")
+
+write_xlsx(list("wt tpm" = wide_tpm_wt,
+                "ako tpm" = wide_tpm_ako,
+                "bko tpm" = wide_tpm_bko),
+           "../data_AKO-BKO/_wide data/AKO BKO tpm wide data.xlsx")
+
+write_xlsx(wide_dea_condition, "../data_AKO-BKO/wide data/effect of KO in NS.xlsx")
+write_xlsx(wide_dea_treatment, "../data_AKO-BKO/wide data/effect of treatments in KOs.xlsx")
+write_xlsx(results_dea_multi, "../data_AKO-BKO/wide data/multivariate analysis.xlsx")
+```
+
+# TRANSCRIPT LEVEL SLEUTH RUN - Dec 16, 2025
+# someone removed the kallisto files??? lol
+
+```{r prep sleuth inputs, include = F}
+#transcript to gene mapping
+t2g <- read_tsv("../data_AKO-BKO/Homo_sapiens.GRCh38.p13.cdna.all.070121.mart_export.txt") %>%
+  select(target_id = 1, gene = 2, gene_id = 4) %>% 
+  distinct(target_id, gene_id, .keep_all = T) %>%
+  na.omit()
+
+#main meta file
+a <- read_tsv("../data_AKO-BKO/meta.txt") %>%
+  select(sample, treatment, condition, time, rep)
+b <- data.frame(sample = list.files("../data_AKO-BKO/test_kallisto2"),
+                  path = list.files("../data_AKO-BKO/test_kallisto2", full.names=T)) %>%
+  filter(sample != "CHGI-NTC")
+meta <- left_join(a,b, by = join_by(sample)) %>%
+  mutate(condition = factor(condition, levels = unique(condition)),
+         treatment = factor(treatment, levels = unique(treatment))) %>%
+  filter(time == 2)
+rm(a,b)
+
+new_filter <- function(row, min_reads = 5, min_prop = 0.2){mean(row >= min_reads) >= min_prop}
+```
+
+```{r create sleuth objects}
+#full sleuth object
+so_transcripts <- sleuth_prep(sample_to_covariates = meta,
+                              target_mapping = t2g,
+                              filter_fun = new_filter,
+                              num_cores = 1)
+saveRDS(so_transcripts, "../data_AKO-BKO/objects/so_transcripts.rds")
+```
+
+```{r pull tpms}
+transcripts_tpm <- kallisto_table(so_transcripts, use_filtered = FALSE) %>%
+  select(target_id, rep, sample, condition, treatment, tpm) %>%
+  left_join(t2g, by = "target_id") %>%
+  select(Gene = gene, transcript = target_id, rep, sample, condition, treatment, tpm) %>%
+  arrange(Gene, transcript, condition, treatment)
+
+write_tsv(transcripts_tpm, "../data_AKO-BKO/B2B_AKO_BKO transcripts tpm.txt")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

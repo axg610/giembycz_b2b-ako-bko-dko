@@ -1,0 +1,596 @@
+```{r setup, include=F}
+library(tidyverse)
+library(pheatmap)
+library(ggrepel)
+library(scales)
+library(writexl)
+```
+
+```{r read raw data, include=F}
+sko_tpm <- read_tsv("../data_AKO-BKO/B2B_AKO_BKO tpm.txt") %>% mutate(rep = gsub("[A-Z]", "", sample))
+sko_dea <- read_tsv("../data_AKO-BKO/B2B_AKO_BKO DEA (effect of treatments in KOs).txt")
+
+dko_tpm <- read_tsv("../data_dKO/raw/B2B_DKO_tpm.txt") %>% mutate(rep = paste0(rep, clone))
+dko_dea <- read_tsv("../data_dKO/raw/B2B_DKO_univariateDEA.txt")
+
+goi <- unique(
+  c(
+    pull(filter(sko_dea, sig != "ns" & treatment == "Form"), Gene),
+    pull(filter(dko_dea, sig != "ns" & treatment == "Form"), Gene)
+  )
+)
+
+sko_goi <- filter(sko_dea, FDR <= 0.05 & treatment == "Form" & condition == "WT") %>% pull(Gene)
+
+dko_goi <- filter(dko_dea, FDR <= 0.05 & treatment == "Form" & condition == "WT") %>% pull(Gene)
+```
+
+```{r ako_bko liberal heatmap}
+mat <- sko_tpm %>%
+  filter(Gene %in% goi) %>%
+  mutate(rep = gsub("[A-Z]", "", sample)) %>%
+  group_by(Gene, rep, condition) %>%
+  mutate(fold = tpm / (tpm[treatment == "NS"] + 0.1)) %>%
+  mutate(fold = log2(fold)) %>%
+  ungroup() %>%
+  filter(treatment == "Form") %>%
+  mutate(condition = if_else(condition == "B2B-WT", "WT", condition)) %>%
+  mutate(name = paste0(condition, "_", sample)) %>%
+  select(Gene, name, fold) %>%
+  pivot_wider(names_from = "name", values_from = "fold") %>%
+  column_to_rownames("Gene")%>%
+  filter(if_all(everything(), is.finite)) %>%
+  as.matrix()
+
+annot <- colnames(mat) %>%
+  as.data.frame(nm = "col") %>%
+  mutate(condition = sub("_.*", "", col)) %>%
+  column_to_rownames("col")
+
+annot_colors <- list(condition = c(WT = "#ffd166" , AKO = "#06d6a0", BKO = "#7570B3"))
+
+colors <- colorRampPalette(c("steelblue4", "steelblue2", "white", "firebrick2", "firebrick4"))(300)
+# 
+# breaks <- c(from = seq(min(mat), to = -1, length = 50),
+#             seq(from = -0.99, to = 0.99, length = 300),
+#             seq(from = 1, to = max(mat), length = 50))
+
+# colors <- colorRampPalette(c("cornflowerblue", "white", "firebrick1"))(300)
+
+breaks <- c(from=seq(min(mat), to=-0.5, length=100),
+            seq(from=-0.49, to=0.49, length=100),
+            seq(from=0.5, to=max(mat), length=100))
+
+pheatmap(mat,
+         cluster_rows = T,
+         cluster_cols = T,
+         annotation_col = annot,
+         annotation_colors = annot_colors,
+         clustering_method = "ward.D2",
+         color = colors,
+         breaks = breaks,
+         cutree_cols = 2,
+         show_rownames = F,
+         border_color = NA,
+         cellheight = 0.5, cellwidth = 10,
+         treeheight_row = 0,
+         filename = "heatmap ako bko.png")
+
+mat_ord <- mat %>%
+  dist(method = "euclidean") %>%
+  hclust(method = "ward.D2") %>%
+  { mat[.$order, , drop = FALSE] } %>%
+  as.data.frame() %>%
+  rownames_to_column("Gene")
+
+write_xlsx(mat_ord, "heatmap ako bko.xlsx")
+
+rm(annot, annot_colors, mat, breaks, colors, mat_ord)
+```
+
+```{r ako_bko focused heatmap}
+mat <- sko_tpm %>%
+  filter(Gene %in% sko_goi) %>%
+  mutate(rep = gsub("[A-Z]", "", sample)) %>%
+  group_by(Gene, rep, condition) %>%
+  mutate(fold = tpm / (tpm[treatment == "NS"] + 0.1)) %>%
+  mutate(fold = log2(fold)) %>%
+  ungroup() %>%
+  filter(treatment == "Form") %>%
+  mutate(condition = if_else(condition == "B2B-WT", "WT", condition)) %>%
+  mutate(name = paste0(condition, "_", sample)) %>%
+  select(Gene, name, fold) %>%
+  pivot_wider(names_from = "name", values_from = "fold") %>%
+  column_to_rownames("Gene")%>%
+  filter(if_all(everything(), is.finite)) %>%
+  as.matrix()
+
+annot <- colnames(mat) %>%
+  as.data.frame(nm = "col") %>%
+  mutate(condition = sub("_.*", "", col)) %>%
+  column_to_rownames("col")
+
+annot_colors <- list(condition = c(WT = "#ffd166" , AKO = "#06d6a0", BKO = "#7570B3"))
+
+colors <- colorRampPalette(c("steelblue4", "steelblue2", "white", "firebrick2", "firebrick4"))(300)
+
+breaks <- c(from=seq(min(mat), to=-0.5, length=100),
+            seq(from=-0.49, to=0.49, length=100),
+            seq(from=0.5, to=max(mat), length=100))
+
+pheatmap(mat,
+         cluster_rows = T,
+         cluster_cols = T,
+         annotation_col = annot,
+         annotation_colors = annot_colors,
+         clustering_method = "ward.D2",
+         color = colors,
+         breaks = breaks,
+         cutree_cols = 2,
+         show_rownames = F,
+         border_color = NA,
+         cellheight = 0.5, cellwidth = 10,
+         treeheight_row = 0,
+         filename = "focused heatmap ako bko.png",
+         main = "1204 Form-regulated genes\n(WT FDR <= 0.05)")
+
+mat_ord <- mat %>%
+  dist(method = "euclidean") %>%
+  hclust(method = "ward.D2") %>%
+  { mat[.$order, , drop = FALSE] } %>%
+  as.data.frame() %>%
+  rownames_to_column("Gene")
+
+write_xlsx(mat_ord, "focused heatmap ako bko.xlsx")
+
+rm(annot, annot_colors, mat, breaks, colors, mat_ord)
+```
+
+```{r dko heatmap}
+mat <- dko_tpm %>%
+  filter(Gene %in% goi) %>%
+  mutate(rep = paste0(rep, clone)) %>%
+  group_by(Gene, rep, condition) %>%
+  mutate(fold = tpm / (tpm[treatment == "NS"] + 0.1)) %>%
+  mutate(fold = log2(fold)) %>%
+  ungroup() %>%
+  filter(treatment == "Form") %>%
+  mutate(name = paste0(condition, "_", sample)) %>%
+  select(Gene, name, fold) %>%
+  pivot_wider(names_from = "name", values_from = "fold") %>%
+  column_to_rownames("Gene")%>%
+  filter(if_all(everything(), is.finite)) %>%
+  as.matrix()
+
+annot <- colnames(mat) %>%
+  as.data.frame(nm = "col") %>%
+  mutate(condition = sub("_.*", "", col)) %>%
+  column_to_rownames("col")
+
+annot_colors <- list(condition = c(WT = "#ffd166" , DKO = "#073b4c"))
+
+colors <- colorRampPalette(c("steelblue4", "steelblue2", "white", "firebrick2", "firebrick4"))(300)
+
+# breaks <- c(from = seq(min(mat), to = -1, length = 50),
+#             seq(from = -0.99, to = 0.99, length = 300),
+#             seq(from = 1, to = max(mat), length = 50))
+
+breaks <- c(from=seq(min(mat), to=-0.5, length=100),
+            seq(from=-0.49, to=0.49, length=100),
+            seq(from=0.5, to=max(mat), length=100))
+
+pheatmap(mat,
+         cluster_rows = T,
+         cluster_cols = T,
+         annotation_col = annot,
+         annotation_colors = annot_colors,
+         clustering_method = "ward.D2",
+         color = colors,
+         breaks = breaks,
+         cutree_cols = 2,
+         show_rownames = F,
+         border_color = NA,
+         cellheight = 0.5, cellwidth = 10,
+         treeheight_row = 0,
+         filename = "heatmap dko.png")
+
+mat_ord <- mat %>%
+  dist(method = "euclidean") %>%
+  hclust(method = "ward.D2") %>%
+  { mat[.$order, , drop = FALSE] } %>%
+  as.data.frame() %>%
+  rownames_to_column("Gene")
+
+write_xlsx(mat_ord, "heatmap dko.xlsx")
+
+rm(annot, annot_colors, mat, breaks, colors, mat_ord)
+```
+
+```{r dko focused heatmap}
+mat <- dko_tpm %>%
+  filter(Gene %in% dko_goi) %>%
+  mutate(rep = paste0(rep, clone)) %>%
+  group_by(Gene, rep, condition) %>%
+  mutate(fold = tpm / (tpm[treatment == "NS"] + 0.1)) %>%
+  mutate(fold = log2(fold)) %>%
+  ungroup() %>%
+  filter(treatment == "Form") %>%
+  mutate(name = paste0(condition, "_", sample)) %>%
+  select(Gene, name, fold) %>%
+  pivot_wider(names_from = "name", values_from = "fold") %>%
+  column_to_rownames("Gene")%>%
+  filter(if_all(everything(), is.finite)) %>%
+  as.matrix()
+
+annot <- colnames(mat) %>%
+  as.data.frame(nm = "col") %>%
+  mutate(condition = sub("_.*", "", col)) %>%
+  column_to_rownames("col")
+
+annot_colors <- list(condition = c(WT = "#ffd166" , DKO = "#073b4c"))
+
+colors <- colorRampPalette(c("steelblue4", "steelblue2", "white", "firebrick2", "firebrick4"))(300)
+
+breaks <- c(from=seq(min(mat), to=-0.5, length=100),
+            seq(from=-0.49, to=0.49, length=100),
+            seq(from=0.5, to=max(mat), length=100))
+
+pheatmap(mat,
+         cluster_rows = T,
+         cluster_cols = T,
+         annotation_col = annot,
+         annotation_colors = annot_colors,
+         clustering_method = "ward.D2",
+         color = colors,
+         breaks = breaks,
+         cutree_cols = 2,
+         show_rownames = F,
+         border_color = NA,
+         cellheight = 0.5, cellwidth = 10,
+         treeheight_row = 0,
+         filename = "focused heatmap dko.png",
+         main = "718 Form-regulated genes\n(WT FDR <= 0.05)")
+
+mat_ord <- mat %>%
+  dist(method = "euclidean") %>%
+  hclust(method = "ward.D2") %>%
+  { mat[.$order, , drop = FALSE] } %>%
+  as.data.frame() %>%
+  rownames_to_column("Gene")
+
+write_xlsx(mat_ord, "focused heatmap dko.xlsx")
+
+rm(annot, annot_colors, mat, breaks, colors, mat_ord)
+```
+
+
+```{r ako_bko volcano plot}
+df <- sko_dea %>%
+  mutate(FDR_transformed = -log10(FDR)) %>%
+  mutate(FDR_transformed = if_else(is.infinite(FDR_transformed), 300, FDR_transformed)) %>%
+  filter(treatment == "Form") %>%
+  na.omit() %>%
+  mutate(treatment = factor(treatment, levels = c("NS", "Form")),
+         condition = factor(condition, levels = c("WT", "AKO", "BKO"))) %>%
+  mutate(lab = if_else(Gene %in% c("NR4A3", "NR4A1", "EGR1"), Gene, NA)) %>%
+  mutate(color = if_else(is.na(lab), "", "sig"),
+         color = paste0(color, sig))
+
+ggplot(df, aes(x = log2fold, y = FDR_transformed, color = color, label = lab)) +
+  facet_grid(condition~.) +
+  geom_point(size = 0.2) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black", lwd = 0.1) +
+  geom_vline(xintercept = c(log2(0.67), log2(1.5)), linetype = "dashed", color = "black", lwd = 0.1) +
+  scale_y_continuous(limits = c(0,330)) +
+  scale_color_manual(values = c(
+    "sigup" = "black", "sigdn" = "black", 
+    "up" = "firebrick1", "dn" = "steelblue1", "ns" = "grey"
+  )) +
+  theme_bw() +
+  theme(strip.background = element_blank(),
+        strip.text = element_text(size = 12),
+        panel.grid = element_blank(),
+        aspect.ratio = 0.67) +
+  geom_text_repel(size = 2, bg.color = "white") +
+  guides(color = "none") +
+  labs(x = expression("log"[2]*"fold"), y = expression("-log"[10]*"FDR"))
+
+ggsave("volcano ako bko.png", h = 4, w = 3, dpi = 600)
+
+rm(df)
+```
+
+```{r dko volcano plot}
+df <- dko_dea %>%
+  mutate(FDR_transformed = -log10(FDR)) %>%
+  mutate(FDR_transformed = if_else(is.infinite(FDR_transformed), 300, FDR_transformed)) %>%
+  filter(treatment == "Form") %>%
+  na.omit() %>%
+  mutate(treatment = factor(treatment, levels = c("NS", "Form")),
+         condition = factor(condition, levels = c("WT", "DKO"))) %>%
+  mutate(lab = if_else(Gene %in% c("NR4A3", "NR4A1", "EGR1"), Gene, NA)) %>%
+  mutate(color = if_else(is.na(lab), "", "sig"),
+         color = paste0(color, sig))
+
+ggplot(df, aes(x = log2fold, y = FDR_transformed, color = color, label = lab)) +
+  facet_grid(condition~.) +
+  geom_point(size = 0.2) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black", lwd = 0.1) +
+  geom_vline(xintercept = c(log2(0.67), log2(1.5)), linetype = "dashed", color = "black", lwd = 0.1) +
+  scale_y_continuous(limits = c(0,330)) +
+  scale_color_manual(values = c(
+    "sigup" = "black", "sigdn" = "black", "signs" = "black",
+    "up" = "firebrick1", "dn" = "steelblue1", "ns" = "grey"
+  )) +
+  theme_bw() +
+  theme(strip.background = element_blank(),
+        strip.text = element_text(size = 12),
+        panel.grid = element_blank(),
+        aspect.ratio = 0.67) +
+  geom_text_repel(size = 2, bg.color = "white", segment.size = 0.3, segment.color = "black", 
+                  arrow = arrow(length = unit(0.015, "npc"), type = "closed", angle = 20),
+                  max.overlaps = Inf) +
+  guides(color = "none") +
+  labs(x = expression("log"[2]*"fold"), y = expression("-log"[10]*"FDR"))
+
+ggsave("volcano dko.png", h = 4, w = 3, dpi = 600)
+
+rm(df)
+```
+
+```{r ako_bko sensitivity gradient}
+custom_genes <- c("NR4A3", "IL6", "CRISPLD2", "NR4A1", "BDKRB2", "CXCL2",
+                  "CYP26B1", "CCL2", "NFKBIZ", "NLRP3", "ZC3H12A", "BCL6",
+                  "NFKBID", "FOSL2", "TNFAIP3", "B4GALT1", "IL6R", "REL", "IL1RAP",
+                  "KIT", "CEBPB", "WNT5A", "SEMA7A", "TFRC", "NR3C1", "TLR4", "KDM4D",
+                  "FOSL1", "TXNIP", "EGR1")
+
+inflamm_genes <- c(
+  pull(read_tsv("../data_AKO-BKO/GO0006954 inflammatory_response.txt"), gene),
+  "NR4A3", "EGR1", "CRISPLD2"
+)
+
+df <- sko_tpm %>%
+  filter(Gene %in% custom_genes) %>%
+  mutate(rep = gsub("[A-Z]", "", sample)) %>%
+  group_by(Gene, rep, condition) %>%
+  mutate(fold = tpm / tpm[treatment == "NS"]) %>%
+  mutate(fold = log2(fold)) %>%
+  filter(treatment == "Form") %>%
+  ungroup()  %>%
+  mutate(condition = if_else(condition == "B2B-WT", "WT", condition))  %>%
+  mutate(Gene = factor(Gene, levels = custom_genes),
+         condition = factor(condition, levels = c("WT", "AKO", "BKO"))) %>%
+  group_by(Gene) %>%
+  mutate(direction = mean(fold),
+         direction = if_else(direction >=0, "up", "dn")) %>%
+  ungroup()
+
+ggplot(data = df, aes(y = fold, x = Gene, fill = direction)) +
+  facet_grid(condition~"Form") +
+  stat_summary(geom = "bar", fun = "mean") +
+  geom_point(size = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey20", lwd = 0.3) +
+  scale_fill_manual(values = c("up" = "firebrick2", "dn" = "steelblue2")) +
+  theme_bw() +
+  theme(strip.background = element_blank(),
+        # panel.grid = element_blank(), 
+        axis.text.x = element_text(angle = 90, hjust = 1),
+        aspect.ratio = 0.3) +
+  guides(fill = "none") +
+  labs(y = expression(log[2] * "fold"), x = NULL) +
+  scale_y_continuous(breaks = seq(-8, 8, by = 2))
+
+ggsave("form spectrum ako bko.png", h = 5, w = 5)
+
+rm(custom_genes, inflamm_genes, df)
+```
+
+```{r dko sensitivity gradient}
+custom_genes <- c("NR4A3", "IL6", "CRISPLD2", "NR4A1", "BDKRB2", "CXCL2",
+                  "CYP26B1", "CCL2", "NFKBIZ", "NLRP3", "ZC3H12A", "BCL6",
+                  "NFKBID", "FOSL2", "TNFAIP3", "B4GALT1", "IL6R", "REL", "IL1RAP",
+                  "KIT", "CEBPB", "WNT5A", "SEMA7A", "TFRC", "NR3C1", "TLR4", "KDM4D",
+                  "FOSL1", "TXNIP", "EGR1")
+
+inflamm_genes <- c(
+  pull(read_tsv("../data_AKO-BKO/GO0006954 inflammatory_response.txt"), gene),
+  "NR4A3", "EGR1", "CRISPLD2"
+)
+
+df <- dko_tpm %>%
+  filter(Gene %in% custom_genes) %>%
+  mutate(rep = paste0(rep, clone)) %>%
+  group_by(Gene, rep, condition) %>%
+  mutate(fold = tpm / tpm[treatment == "NS"]) %>%
+  mutate(fold = log2(fold)) %>%
+  filter(treatment == "Form") %>%
+  ungroup()  %>%
+  mutate(condition = if_else(condition == "B2B-WT", "WT", condition))  %>%
+  mutate(Gene = factor(Gene, levels = custom_genes),
+         condition = factor(condition, levels = c("WT", "DKO"))) %>%
+  group_by(Gene) %>%
+  mutate(direction = mean(fold, na.rm = T),
+         direction = if_else(direction >=0, "up", "dn")) %>%
+  ungroup()
+
+ggplot(data = df, aes(y = fold, x = Gene, fill = direction)) +
+  facet_grid(condition~"Form") +
+  stat_summary(geom = "bar", fun = "mean") +
+  geom_point(size = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey20", lwd = 0.3) +
+  scale_fill_manual(values = c("up" = "firebrick2", "dn" = "steelblue2")) +
+  theme_bw() +
+  theme(strip.background = element_blank(),
+        # panel.grid = element_blank(), 
+        axis.text.x = element_text(angle = 90, hjust = 1),
+        aspect.ratio = 0.3) +
+  guides(fill = "none") +
+  labs(y = expression(log[2] * "fold"), x = NULL) +
+  scale_y_continuous(breaks = seq(-8, 8, by = 2))
+
+ggsave("form spectrum dko.png", h = 5, w = 5)
+
+rm(custom_genes, inflamm_genes, df)
+```
+
+```{r full sensitivity gradient}
+order <- sko_dea %>%
+  filter(treatment == "Form" & condition == "WT" & sig != "ns") %>%
+  arrange(desc(log2fold)) %>% pull(Gene)
+
+df <- sko_dea %>%
+  filter(treatment == "Form" & Gene %in% order) %>%
+  mutate(Gene = factor(Gene, levels = order),
+         condition = factor(condition, levels = c("WT", "AKO", "BKO"))) %>%
+  arrange(Gene)
+
+ggplot(df, aes(x = Gene, y = log2fold, fill = sig)) +
+  facet_grid(condition~"Form") +
+  geom_col(width = 0.91) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey20", lwd = 0.3) +
+  scale_fill_manual(values = c("up" = "firebrick2", "ns" = "grey", "dn" = "steelblue2")) +
+  theme_bw() +
+  theme(strip.background = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        aspect.ratio = 0.3) +
+  guides(fill = "none") +
+  labs(y = expression(log[2] * "fold"), x = NULL) +
+  scale_y_continuous(breaks = seq(-8, 8, by = 2),
+                     expand = expansion(mult = 0))
+
+ggsave("full form spectrum ako bko.png", h = 3, w = 3, dpi = 600)
+
+order <- dko_dea %>%
+  filter(treatment == "Form" & condition == "WT" & sig != "ns") %>%
+  arrange(desc(log2fold)) %>% pull(Gene)
+
+df <- dko_dea %>%
+  filter(treatment == "Form" & Gene %in% order) %>%
+  mutate(Gene = factor(Gene, levels = order),
+         condition = factor(condition, levels = c("WT", "DKO"))) %>%
+  arrange(Gene)
+
+ggplot(df, aes(x = Gene, y = log2fold, fill = sig)) +
+  facet_grid(condition~"Form") +
+  geom_col(width = 0.91) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey20", lwd = 0.3) +
+  scale_fill_manual(values = c("up" = "firebrick2", "ns" = "grey", "dn" = "steelblue2")) +
+  theme_bw() +
+  theme(strip.background = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        aspect.ratio = 0.3) +
+  guides(fill = "none") +
+  labs(y = expression(log[2] * "fold"), x = NULL) +
+  scale_y_continuous(breaks = seq(-8, 8, by = 2),
+                     expand = expansion(mult = 0))
+
+ggsave("full form spectrum dko.png", h = 3, w = 3, dpi = 600)
+
+rm(df, order)
+```
+
+```{r effect on PKA expression}
+pka <- c("PRKACA", "PRKACB", "PRKX", "PRKAR1A", "PRKAR1B", "PRKAR2A", "PRKAR2B")
+adcy <- c("ADCY1", "ADCY2", "ADCY3", "ADCY4", "ADCY5", "ADCY6", "ADCY7", "ADCY9")
+pde <- c("PDE1C", "PDE2A", "PDE3A", "PDE4A", "PDE4B", "PDE4C", "PDE4D", "PDE7A", "PDE7B", "PDE8A", "PDE8B", "PDE10A")
+
+df <- rbind(
+  select(dko_tpm, Gene, rep, condition, treatment, tpm),
+  select(sko_tpm, Gene, rep, condition, treatment, tpm)
+) %>%
+  mutate(condition = if_else(condition == "B2B-WT", "WT", condition),
+         condition = factor(condition, levels = c("WT", "AKO", "BKO", "DKO")))
+
+repinfo <- df %>% select(rep, condition) %>% distinct() %>% count(condition)
+
+ggplot(df %>% filter(Gene %in% pka & treatment == "NS") %>% 
+         mutate(Gene = factor(Gene, levels = pka)),
+       aes(x = Gene, y = tpm)) +
+  facet_wrap(~condition, nrow = 1) +
+  geom_boxplot(outliers = F, fill = "grey50", lwd = 0.25, color = "black") +
+  geom_jitter(size = 0.2, width = 0.2) +
+  scale_y_continuous(trans = "log2", breaks = c(1, 2, 4, 8, 16, 32, 64, 128, 256)) +
+  theme_bw() +
+  theme(strip.background = element_blank(),
+        strip.text = element_text(size = 12),
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5),
+        aspect.ratio = 1.67) +
+  labs(x = NULL, y = expression(log[2] * "tpm"), title = "basal level") +
+  geom_text(data = repinfo, mapping = aes(Inf, Inf, label = paste0("N=", n)),
+            hjust = 1.1, vjust = 1.3, cex = 3)
+
+ggsave("expression pka subunits ns.png", h = 5, w = 5, dpi = 600)
+
+ggplot(df %>% filter(Gene %in% pka & treatment %in% c("NS", "Form")) %>% 
+         mutate(Gene = factor(Gene, levels = pka),
+                treatment = factor(treatment, levels = c("NS", "Form"))),
+       aes(x = Gene, y = tpm, fill = treatment)) +
+  facet_wrap(~condition, nrow = 1) +
+  geom_boxplot(outliers = F, lwd = 0.25, color = "black", position = position_dodge(width = 0.9)) +
+  scale_y_continuous(trans = "log2", breaks = c(1, 2, 4, 8, 16, 32, 64, 128, 256)) +
+  theme_bw() +
+  theme(strip.background = element_blank(),
+        strip.text = element_text(size = 12),
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5),
+        aspect.ratio = 1.2) +
+  labs(x = NULL, y = expression(log[2] * "tpm"), title = "+/- Form (1 nM)") +
+  geom_text(data = repinfo %>%
+              mutate(treatment = ""),
+            mapping = aes(Inf, Inf, label = paste0("N=", n)),
+            hjust = 1.1, vjust = 1.3, cex = 3, color = "black") +
+  scale_fill_manual(values = c("grey50", "firebrick2", "black"))
+
+ggsave("expression pka subunits form.png", h = 6, w = 6, dpi = 600)
+
+ggplot(df %>% 
+         filter(Gene %in% adcy & treatment == "NS") %>%
+         mutate(Gene = factor(Gene, levels = adcy)),
+       aes(x = condition, y = tpm)) +
+  facet_wrap(~Gene, nrow = 2, scales = "free_y") +
+  scale_y_continuous(trans = "log2", 
+                     breaks = c(0.03125, 0.0625, 0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256),
+                     labels = c("1/32", "1/16", "1/8", "1/4", "1/2", 1, 2, 4, 8, 16, 32, 64, 128, 256)) +
+  geom_boxplot(outliers = F, lwd = 0.25, color = "black", fill = "grey50") +
+  theme_bw() +
+  theme(strip.background = element_blank(),
+        strip.text = element_text(size = 12),
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5),
+        aspect.ratio = 1) +
+  labs(x = NULL, y = expression(log[2] * "tpm"), title = "basal level")
+
+ggsave("expression adcy subunits ns.png", h = 4, w = 6)
+
+ggplot(df %>% 
+         filter(Gene %in% pde & treatment == "NS") %>%
+         mutate(Gene = factor(Gene, levels = pde)),
+       aes(x = condition, y = tpm)) +
+  facet_wrap(~Gene, nrow = 3, scales = "free_y") +
+  scale_y_continuous(trans = "log2", 
+                     breaks = c(0.03125, 0.0625, 0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256),
+                     labels = c("1/32", "1/16", "1/8", "1/4", "1/2", 1, 2, 4, 8, 16, 32, 64, 128, 256)) +
+  geom_boxplot(outliers = F, lwd = 0.25, color = "black", fill = "grey50") +
+  theme_bw() +
+  theme(strip.background = element_blank(),
+        strip.text = element_text(size = 12),
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5),
+        aspect.ratio = 1) +
+  labs(x = NULL, y = expression(log[2] * "tpm"), title = "basal level")
+
+ggsave("expression pde subunits ns.png", h = 6, w = 6)
+
+rm(df, adcy, pde, pka, repinfo)
+```
+

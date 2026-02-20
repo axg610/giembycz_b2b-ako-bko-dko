@@ -1,0 +1,102 @@
+```{r setup, include=F}
+library(tidyverse)
+library(ggrepel)
+library(writexl)
+```
+
+```{r read raw data, include=F}
+meta <- read_tsv("meta.txt")
+raw_tpm <- read_tsv("../data_dKO/raw/B2B_DKO_tpm.txt")
+raw_dea <- read_tsv("../data_dKO/raw/B2B_DKO_univariateDEA.txt")
+raw_int <- read_tsv("../data_dKO/raw/B2B_DKO_multivariateDEA.txt")
+
+raw_basal <- read_tsv("../data_dKO/raw/B2B_NS_univariateDEA (effect of dKO on basal expression).txt")
+
+ggplot(raw_basal, aes(x = log2fold, y = -log10(FDR), color = sig, label = Gene)) +
+  geom_text(size = 2) +
+  scale_color_manual(values = c("steelblue2", "grey20", "firebrick2")) +
+  theme_minimal() +
+  theme(aspect.ratio = 1) +
+  labs(title = "effect of dKO on basal (NS) expression")
+
+ggsave("basal expression check.jpg")
+```
+
+```{r pivoting for mark}
+wide_tpm_wt <- raw_tpm %>%
+  mutate(clone = case_when(
+    clone == "0-0" ~ "wt",
+    clone == "07-Mar" ~ "dKO3-7",
+    clone == "09-Mar" ~ "dKO3-9",
+    clone == "10-May" ~ "dKO5-10",
+    clone == "08-Sep" ~ "dKO9-8"
+  )) %>%
+  mutate(rep = paste0("rep", rep)) %>%
+  arrange(rep) %>%
+  mutate(sample = paste0(treatment, " (", clone, " ", rep, ")")) %>%
+  select(Gene, condition, sample, tpm) %>%
+  pivot_wider(values_from = "tpm", names_from = "sample") %>%
+  select(Gene, condition, contains("NS"), contains("Form")) %>%
+  filter(condition == "WT") %>% select(-condition, -contains("dKO"))
+
+wide_tpm_dko <- raw_tpm %>%
+  mutate(clone = case_when(
+    clone == "0-0" ~ "wt",
+    clone == "07-Mar" ~ "dKO3-7",
+    clone == "09-Mar" ~ "dKO3-9",
+    clone == "10-May" ~ "dKO5-10",
+    clone == "08-Sep" ~ "dKO9-8"
+  )) %>%
+  mutate(rep = paste0("rep", rep)) %>%
+  arrange(rep) %>%
+  mutate(sample = paste0(treatment, " (", clone, " ", rep, ")")) %>%
+  select(Gene, condition, sample, tpm) %>%
+  pivot_wider(values_from = "tpm", names_from = "sample") %>%
+  select(Gene, condition, contains("NS"), contains("Form")) %>%
+  filter(condition == "DKO") %>% select(-condition, -contains("wt"))
+
+write_xlsx(list("wt tpm" = wide_tpm_wt,
+                "dko tpm" = wide_tpm_dko),
+           "../data_dKO/_wide data/dKO tpm wide data.xlsx")
+
+wide_dea <- raw_dea %>%
+  select(-log2fold) %>%
+  pivot_longer(cols = c(fold, FDR)) %>%
+  mutate(sample = paste(condition, treatment, name)) %>%
+  select(Gene, sample, value) %>%
+  pivot_wider(values_from = "value", names_from = "sample")
+
+write_xlsx(list("dea" = wide_dea),
+           "../data_dKO/_wide data/dKO DEA wide data.xlsx")
+
+write_xlsx(list("dea" = raw_basal),
+           "../data_dKO/_wide data/dKO basal DEA (effect of dKO on NS expression).xlsx")
+
+```
+
+```{r PCA}
+tpm_matrix <- raw_tpm %>%
+  select(Gene, sample, tpm) %>%
+  pivot_wider(names_from = sample, values_from = tpm) %>%
+  column_to_rownames("Gene") %>%
+  as.matrix()
+tpm_matrix <- log2(tpm_matrix + 1)
+tpm_matrix <- tpm_matrix[apply(tpm_matrix, 1, var) > 0, ]
+
+pca <- prcomp(t(tpm_matrix), scale. = TRUE)
+
+plot_df <- data.frame(pca$x[, 1:2], sample = rownames(pca$x)) %>%
+  left_join(meta, by = "sample") %>%
+  select(sample, condition, treatment, PC1, PC2)
+
+ggplot(plot_df, aes(x = PC1, y = PC2, color = condition, shape = treatment, label = sample)) +
+  geom_point(size = 1) +
+  geom_text_repel(size = 3, segment.alpha = 0) +
+  theme_bw() +
+  theme(aspect.ratio = 1) 
+
+ggsave("pca1_2.png")
+
+rm(tpm_matrix, pca, plot_df)
+```
+
