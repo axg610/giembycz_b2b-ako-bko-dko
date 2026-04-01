@@ -4,7 +4,10 @@ library(pheatmap)
 library(ggrepel)
 library(scales)
 library(writexl)
+source("../helpers.R")
 ```
+
+## read raw data
 
 ```{r read raw data, include=F}
 sko_tpm <- read_tsv("../data_AKO-BKO/B2B_AKO_BKO tpm.txt") %>% mutate(rep = gsub("[A-Z]", "", sample))
@@ -24,6 +27,11 @@ sko_goi <- filter(sko_dea, FDR <= 0.05 & treatment == "Form" & condition == "WT"
 
 dko_goi <- filter(dko_dea, FDR <= 0.05 & treatment == "Form" & condition == "WT") %>% pull(Gene)
 ```
+
+
+## prelim heatmaps
+
+liberal and focused heatmaps. Not sure what this means anymore
 
 ```{r ako_bko liberal heatmap}
 mat <- sko_tpm %>%
@@ -263,6 +271,7 @@ write_xlsx(mat_ord, "focused heatmap dko.xlsx")
 rm(annot, annot_colors, mat, breaks, colors, mat_ord)
 ```
 
+## volcano plots for tamkeen and mark
 
 ```{r ako_bko volcano plot}
 df <- sko_dea %>%
@@ -337,6 +346,8 @@ ggsave("volcano dko.png", h = 4, w = 3, dpi = 600)
 
 rm(df)
 ```
+
+## sensitivity gradients for tamkeen and mark
 
 ```{r ako_bko sensitivity gradient}
 custom_genes <- c("NR4A3", "IL6", "CRISPLD2", "NR4A1", "BDKRB2", "CXCL2",
@@ -493,6 +504,8 @@ ggsave("full form spectrum dko.png", h = 3, w = 3, dpi = 600)
 
 rm(df, order)
 ```
+
+## expression of pka and pde subunits
 
 ```{r effect on PKA expression}
 pka <- c("PRKACA", "PRKACB", "PRKX", "PRKAR1A", "PRKAR1B", "PRKAR2A", "PRKAR2B")
