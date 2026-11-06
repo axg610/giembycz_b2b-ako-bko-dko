@@ -1,9 +1,10 @@
 ```{r setup, include=F}
-library(tidyverse)
+library(ComplexHeatmap)
 library(pheatmap)
 library(ggrepel)
 library(scales)
 library(writexl)
+library(tidyverse)
 source("../helpers.R")
 ```
 
@@ -606,4 +607,120 @@ ggsave("expression pde subunits ns.png", h = 6, w = 6)
 
 rm(df, adcy, pde, pka, repinfo)
 ```
+
+## follow-up from tamkeen's seahorse experiments
+
+DKO cells should have increased ox-phos, glycolysis, wound healing at basal
+
+```{r, fig.height = 7, fig.width = 4}
+extract_gene_symbols <- function(tsv_path){
+  read_tsv(tsv_path) %>%
+    filter(STANDARD_NAME == "GENE_SYMBOLS") %>%
+    .[, 2] %>%
+    deframe() %>%
+    str_split(pattern = ",") %>%
+    .[[1]]
+}
+
+goi_woundHealing <- extract_gene_symbols(
+  "../data_dKO/GOBP_WOUND_HEALING.v2026.1.Hs.tsv"
+)
+goi_glycolysis <- extract_gene_symbols(
+  "../data_dKO/HALLMARK_GLYCOLYSIS.v2026.1.Hs.tsv"
+)
+goi_oxphos <- extract_gene_symbols(
+  "../data_dKO/HALLMARK_OXIDATIVE_PHOSPHORYLATION.v2026.1.Hs.tsv"
+)
+
+gene_sets <- list(
+  HALLMARK_GLYCOLYSIS = goi_glycolysis,
+  HALLMARK_OXIDATIVE_PHOSPHORYLATION = goi_oxphos,
+  GOBP_WOUND_HEALING = goi_woundHealing
+)
+
+for (rl in names(gene_sets)) {
+  
+  g <- gene_sets[[rl]]
+  
+  mat <- dko_tpm %>%
+    filter(Gene %in% g) %>%
+    filter(treatment == "NS") %>%
+    # mutate(tpm = log2(tpm + 0.1)) %>%
+    mutate(name = paste0(condition, "_", treatment, "_", rep)) %>%
+    select(Gene, name, tpm) %>%
+    pivot_wider(names_from = name, values_from = tpm) %>%
+    column_to_rownames("Gene") %>%
+    select(
+      contains("WT_NS"),
+      contains("DKO_NS"),
+      # contains("WT_Form"),
+      # contains("DKO_Form")
+    ) %>%
+    t() %>%
+    scale() %>%
+    t() %>%
+    as.data.frame() %>%
+    filter(if_all(everything(), is.finite)) %>%
+    as.matrix()
+  
+  colsplit <- factor(
+    c(
+      rep("WT NS", 8),
+      rep("DKO NS", 8)
+      # rep("WT Form", 8),
+      # rep("DKO Form", 8)
+    ),
+    levels = c(
+      "WT NS", 
+      "DKO NS" 
+      # "WT Form", 
+      # "DKO Form"
+      )
+  )
+  
+  colors <- circlize::colorRamp2(
+    seq(
+      quantile(mat, 0.05), 
+      quantile(mat, 0.95), 
+      length = 200),
+    colorRampPalette(
+      c(
+        "steelblue4", "steelblue2",
+        "white",
+        "firebrick2", "firebrick4"
+      )
+    )(200)
+  )
+  
+  print(
+    Heatmap(
+      mat,
+      cluster_columns = FALSE,
+      clustering_method_rows = "complete",
+      column_split = colsplit,
+      show_column_names = FALSE,
+      show_row_names = FALSE,
+      name = "z-scored tpm",
+      row_title = rl,
+      col = colors
+    )
+  )
+  
+}
+
+cleanup_objects()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
 
